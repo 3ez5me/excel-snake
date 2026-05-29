@@ -4,3 +4,14 @@ Copy snake.yaml or gist url https://gist.github.com/3ez5me/29cbdfea51fa0a5dd546d
 
 Movement: WASD or arrow keys
 
+Demo: 
+
+
+https://github.com/user-attachments/assets/1cc8b7c0-2a7f-4ed2-9a80-2b9ef6979b57
+
+
+How to Load into Microsoft Excel (must have SnippetLab add-in):
+
+
+https://github.com/user-attachments/assets/4a9732ef-124d-46b4-b44d-cc82ae9c4955
+
