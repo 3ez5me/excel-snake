@@ -1,4 +1,6 @@
-Faithful recreation of snake 2 from Nokia 3310 in Excel using Typescript (ScriptLab)
+Excel's cell-formatting engine repurposed as a pixel renderer to make a gameplay-faithful clone of the Nokia 3310 game “Snake II”, including special food items, original level/score multipliers, wrap-around movement, and timed bonus mechanics.
+
+Grab an old [Nokia 3310 and compare it](https://www.youtube.com/watch?v=0gPbNhFjm1o). 
 
 Copy snake.yaml or gist url https://gist.github.com/3ez5me/29cbdfea51fa0a5dd546dfe916492b78 into ScriptLab in Excel
 
