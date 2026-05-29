@@ -1,0 +1,860 @@
+name: Nokia 3310 Snake Game
+description: With O(1) runtime operations
+host: EXCEL
+api_set: {}
+script:
+  content: >
+    const container = document.getElementById("container") as HTMLElement;
+
+    const play = document.getElementById("play") as HTMLButtonElement;
+
+    const widthInput = document.getElementById("width") as HTMLInputElement;
+
+    const heightInput = document.getElementById("height") as HTMLInputElement;
+
+    const speedInput = document.getElementById("speed") as HTMLInputElement;
+
+    const resultContainer = document.getElementById("result") as HTMLDivElement;
+
+    const winLoss = document.getElementById("winloss") as HTMLSpanElement;
+
+    const finalScore = document.getElementById("final") as HTMLSpanElement;
+
+
+    // Code ain't that clean, but who cares, small game
+
+    // Could do a proper recursive positioning / component system to not have as
+    many magic numbers
+
+
+    type Direction = 0 | 1 | 2 | 3;
+
+    const Up: Direction = 0;
+
+    const Right: Direction = 1;
+
+    const Down: Direction = 2;
+
+    const Left: Direction = 3;
+
+
+    const TILE_SIZE = 4; // 4x4 cells per tile
+
+    const SPECIAL_TILE_WIDTH = 8;
+
+    const SPECIAL_TILE_HEIGHT = 4;
+
+    const NUM_WIDTH = 4;
+
+    const NUM_HEIGHT = 5;
+
+    const MIN_GAME_WIDTH = 8;
+
+    const MIN_GAME_HEIGHT = 2;
+
+
+    // prettier-ignore
+
+    const keyMap: Record<string, Direction> = { ArrowUp: Up, ArrowDown: Down,
+    ArrowLeft: Left, ArrowRight: Right, W: Up, A: Left, S: Down, D: Right, w:
+    Up, a: Left, s: Down, d: Right, };
+
+
+    const FG = "#000000";
+
+    const BG = "#B2BE08";
+
+    const GAMETOP = 8;
+
+    const GAMELEFT = 8;
+
+    const GRIDTOP = GAMETOP + NUM_HEIGHT + 2;
+
+    const GRIDLEFT = GAMELEFT + 0;
+
+    const GRIDINNERTOP = GRIDTOP + 5;
+
+    const GRIDINNERLEFT = GRIDLEFT + 4;
+
+
+    const speeds = [658, 478, 378, 298, 228, 178, 138, 108, 88, 68, 48, 38, 28,
+    18, 8];
+
+
+    // 4x4
+
+    // BODY[hasEaten][prevDir][dir]
+
+    const BODY = [
+      [
+        [25158, 27328, 0, 25904],
+        [854, 3504, 25904, 0],
+        [0, 3238, 25638, 854],
+        [3238, 0, 27328, 3024],
+      ],
+      [
+        [27606, 60096, 0, 30000],
+        [855, 28086, 30000, 0],
+        [0, 3246, 28086, 855],
+        [3246, 0, 60096, 27606],
+      ],
+    ].map((hasEaten) => hasEaten.map((prevDir) => prevDir.map((dir) =>
+    bitsToPropMat(TILE_SIZE, TILE_SIZE, dir))));
+
+
+    // 4x4
+
+    // TAIL[dir]
+
+    const TAIL = [17510, 4032, 26180, 3888].map((tailBits) =>
+    bitsToPropMat(TILE_SIZE, TILE_SIZE, tailBits));
+
+
+    // 4x4
+
+    // HEAD[isOpen][dir]
+
+    const HEAD = [
+      [22112, 1889, 1637, 3688],
+      [22160, 17189, 2405, 11338],
+    ].map((isOpen) => isOpen.map((dir) => bitsToPropMat(TILE_SIZE, TILE_SIZE,
+    dir)));
+
+
+    // 8x4
+
+    const SPECIAL = [1014979084, 2780692284, 620723498, 2868838656, 1358721827,
+    4269627696].map((foodBits) =>
+      bitsToPropMat(SPECIAL_TILE_HEIGHT, SPECIAL_TILE_WIDTH, foodBits),
+    );
+
+    // 4x4
+
+    const FRUIT = bitsToPropMat(TILE_SIZE, TILE_SIZE, 594);
+
+
+    // 4x5
+
+    const NUMBERS = [961198, 559304, 929422, 953998, 560810, 953902, 962094,
+    281742, 962222, 954030].map((numBits) =>
+      bitsToPropMat(5, 4, numBits),
+    );
+
+
+    function setup() {
+      const game = new SnakeGame();
+      play.addEventListener("click", () => tryCatch(() => game.run()));
+      document.addEventListener("keydown", (e) => game.handleKeydown(e));
+    }
+
+
+    function getWidth() {
+      return +widthInput.value;
+    }
+
+
+    function getHeight() {
+      return +heightInput.value;
+    }
+
+
+    function getSpeed() {
+      return +speedInput.value;
+    }
+
+
+    class SnakeGame {
+      snake: Snake;
+      private animationFrame = -1;
+      private gameToken = 0;
+      private sheet!: Excel.Worksheet;
+      private isGameOver = false;
+      private flashVisible = true;
+      private flashInterval = 500; // ms
+
+      constructor() {
+        this.snake = new Snake(getHeight(), getWidth());
+      }
+
+      async run() {
+        const thisGameToken = ++this.gameToken;
+        cancelAnimationFrame(this.animationFrame);
+        await Excel.run(async (context) => {
+          let sheet = context.workbook.worksheets.getItemOrNullObject("snake");
+          await context.sync();
+          if (sheet.isNullObject) sheet = context.workbook.worksheets.add("snake");
+          this.sheet = sheet;
+
+          const width = Math.max(MIN_GAME_WIDTH, getWidth());
+          const height = Math.max(MIN_GAME_HEIGHT, getHeight());
+          const speed = Math.max(1, Math.min(9, getSpeed()));
+          this.snake = new Snake(height, width);
+          this.isGameOver = false;
+          const snake = this.snake;
+
+          sheet.activate();
+          formatBackground(sheet);
+          this.drawScreen();
+          this.initialDraw();
+          resultContainer.style.visibility = "hidden";
+          await context.sync();
+
+          let prevTime = 0;
+          const loop = async (time: number) => {
+            if (thisGameToken !== this.gameToken) return;
+
+            if (this.isGameOver) {
+              if (time - prevTime >= this.flashInterval) {
+                this.flashVisible = !this.flashVisible;
+                prevTime = time;
+                if (this.flashVisible) this.drawSnake();
+                else this.clearSnake();
+                await context.sync();
+              }
+              this.animationFrame = requestAnimationFrame(loop);
+              return;
+            }
+
+            if (time - prevTime < speeds[speed]) {
+              this.animationFrame = requestAnimationFrame(loop);
+              return;
+            }
+            prevTime = time;
+            snake.ticksRemaining--;
+
+            const headDir = snake.segments.get(snake.segments.head);
+            const headDirPair = snake.dirToRelative(headDir);
+            const headPair = snake.indexToPair(snake.head);
+            const newHeadPair = snake.add(headDirPair, headPair);
+            const newHead = snake.pairToIndex(newHeadPair);
+
+            const tailDir = snake.segments.get(snake.segments.tail);
+            const tailDirPair = snake.dirToRelative(tailDir);
+            const tailPair = snake.indexToPair(snake.tail);
+            const newTailPair = snake.add(tailDirPair, tailPair);
+            const newTail = snake.pairToIndex(newTailPair);
+            const newTailDir = snake.segments.get((snake.segments.tail + 1) % snake.segments.size);
+
+            const prevNeckDir = snake.segments.get((snake.segments.head - 1 + snake.segments.size) % snake.segments.size);
+            const neckDir = snake.segments.get(snake.segments.head);
+            const newNeck = snake.head;
+            const newNeckPair = snake.indexToPair(newNeck);
+
+            const staringAt = snake.pairToIndex(snake.add(headDirPair, newHeadPair));
+
+            const specialPair = snake.indexToPair(snake.special);
+            let justAteFruit = false;
+            snake.digesting.set(snake.tail, 0);
+            let isWin = false;
+
+            if (newHead === snake.fruit) {
+              // eat and grow
+              snake.grow(newHead);
+              snake.score += speed;
+              justAteFruit = true;
+              this.drawScore();
+              snake.digesting.set(newHead, 1);
+
+              const newFruit = snake.singles.randomS();
+              const newFruitPair = snake.indexToPair(newFruit);
+              if (newFruit === -1) {
+                resultContainer.style.visibility = "visible";
+                winLoss.innerText = "WIN";
+                finalScore.innerText = `${this.snake.score}`;
+                isWin = true;
+              } else {
+                // draw fruit
+                this.drawGridSprite(newFruitPair, 1, 1, FRUIT);
+
+                snake.fruit = newFruit;
+                snake.occupy(newFruit);
+              }
+            } else if (newHead === snake.special || newHead === snake.special + 1) {
+              // eat no grow
+
+              // clear special
+              this.clearGridSprite(specialPair, 2, 1);
+              // clear tail
+              this.clearGridSprite(tailPair, 1, 1);
+              // draw new tail
+              this.drawGridSprite(newTailPair, 1, 1, TAIL[newTailDir]);
+              // clear around special timer
+              snake.digesting.set(newHead, 1);
+
+              // 1. free special
+              snake.free(snake.special);
+              snake.free(snake.special + 1);
+
+              // 2. move body
+              snake.special = -2;
+              snake.move(newHead, newTail);
+              snake.score += 5 * speed + 2 * snake.ticksRemaining + 7;
+              snake.ticksRemaining = 0;
+              this.drawScore();
+              this.clearSpecialAndTimer();
+            } else if (snake.singles.isFreeS(newHead) || newHead === snake.tail) {
+              // empty space
+
+              // clear tail
+              this.clearGridSprite(tailPair, 1, 1);
+              // draw new tail
+              this.drawGridSprite(newTailPair, 1, 1, TAIL[newTailDir]);
+
+              snake.move(newHead, newTail);
+            } else {
+              // game loss
+              this.isGameOver = true;
+              const prevHeadDir = snake.segments.get((snake.segments.head - 1 + snake.segments.size) % snake.segments.size);
+              snake.segments.set(snake.segments.head, prevHeadDir);
+              resultContainer.style.visibility = "visible";
+              winLoss.innerText = "LOST";
+              finalScore.innerText = `${this.snake.score}`;
+              await context.sync();
+              this.animationFrame = requestAnimationFrame(loop);
+              return;
+            }
+
+            // draw neck
+
+            const hasEaten = snake.digesting.get(newNeck);
+            this.drawGridSprite(newNeckPair, 1, 1, BODY[hasEaten][prevNeckDir][neckDir]);
+
+            let hasSpecial = snake.special >= 0;
+            if (snake.eaten % 5 === 0 && snake.eaten !== 0 && !hasSpecial && justAteFruit) {
+              // spawn special
+              snake.ticksRemaining = 20;
+              const newSpecial = snake.pairs.randomS();
+              if (newSpecial >= 0) {
+                snake.special = newSpecial;
+                hasSpecial = true;
+                const newSpecialPair = snake.indexToPair(newSpecial);
+                snake.occupy(snake.special);
+                snake.occupy(snake.special + 1);
+                // draw special
+                const specialI = Math.floor(Math.random() * SPECIAL.length);
+                this.drawGridSprite(newSpecialPair, 2, 1, SPECIAL[specialI]);
+                this.drawSpecialBeforeTimer(specialI);
+              }
+            }
+
+            // draw head
+            const isStaringAtFruit = staringAt === snake.fruit;
+            const isStaringAtSpecial = hasSpecial && (staringAt === snake.special || staringAt === snake.special + 1);
+            const isOpen = isStaringAtFruit || isStaringAtSpecial;
+
+            this.drawGridSprite(newHeadPair, 1, 1, HEAD[+isOpen][headDir]);
+
+            if (snake.ticksRemaining > 0) this.drawTimer();
+
+            if (snake.ticksRemaining === 0 && hasSpecial) {
+              const specialPair = snake.indexToPair(snake.special);
+              this.clearGridSprite(specialPair, 2, 1);
+              this.clearSpecialAndTimer();
+              snake.free(snake.special);
+              snake.free(snake.special + 1);
+              snake.special = -2;
+            }
+
+            await context.sync();
+            if (!isWin) this.animationFrame = requestAnimationFrame(loop);
+          };
+
+          this.animationFrame = requestAnimationFrame(loop);
+        });
+      }
+
+      private drawSnake() {
+        const snake = this.snake;
+        const tailPair = snake.indexToPair(snake.tail);
+        const tailDir = snake.segments.get(snake.segments.tail);
+        this.drawGridSprite(tailPair, 1, 1, TAIL[tailDir]);
+
+        let segment = snake.add(tailPair, snake.dirToRelative(tailDir));
+        let prevDir = tailDir;
+        let i = 1;
+        while (snake.pairToIndex(segment) !== snake.head) {
+          const dir = snake.segments.get(snake.segments.absPos(i));
+          const hasEaten = snake.digesting.get(snake.pairToIndex(segment));
+          this.drawGridSprite(segment, 1, 1, BODY[hasEaten][prevDir][dir]);
+          segment = snake.add(segment, snake.dirToRelative(dir));
+          i++;
+          prevDir = dir;
+        }
+
+        const headDir = snake.segments.get(snake.segments.head);
+        const staringAtPair = snake.add(segment, snake.dirToRelative(headDir));
+        const staringAt = snake.pairToIndex(staringAtPair);
+        const isStaringAtFruit = staringAt === snake.fruit;
+        // @ts-ignore excel ts bug
+        const isStaringAtSpecial = snake.special >= 0 && [snake.special, snake.special + 1].includes(staringAt);
+        const isOpen = isStaringAtFruit || isStaringAtSpecial;
+        this.drawGridSprite(segment, 1, 1, HEAD[+isOpen][headDir]);
+      }
+
+      private clearSnake() {
+        const snake = this.snake;
+
+        let segment = snake.indexToPair(snake.tail);
+        this.clearGridSprite(segment, 1, 1); // clear tail
+        let i = 0;
+        while (snake.pairToIndex(segment) !== snake.head) {
+          // clear body and head
+          segment = snake.add(segment, snake.dirToRelative(snake.segments.get(snake.segments.absPos(i))));
+          this.clearGridSprite(segment, 1, 1);
+          i++;
+        }
+      }
+
+      private initialDraw() {
+        this.drawScore();
+        const snake = this.snake;
+        this.drawBoarderOutsideGrid();
+        this.drawSnake();
+
+        const isWin = snake.fruit === -1;
+        if (isWin) return;
+        this.drawGridSprite(snake.indexToPair(snake.fruit), 1, 1, FRUIT);
+      }
+
+      private drawBoarderOutsideGrid() {
+        const sheet = this.sheet;
+        const overLine = Math.max(0, GRIDTOP);
+        const top = Math.max(0, GRIDTOP + 2);
+        const left = Math.max(0, GRIDLEFT + 1);
+        const width = (this.snake.cols + 2) * TILE_SIZE - 2;
+        const height = (this.snake.rows + 2) * TILE_SIZE - 2;
+
+        sheet.getRangeByIndexes(overLine, left, 1, width).format.fill.color = FG;
+        sheet.getRangeByIndexes(top, left, 1, width).format.fill.color = FG;
+        sheet.getRangeByIndexes(top, left, height, 1).format.fill.color = FG;
+        sheet.getRangeByIndexes(top + height - 1, left, 1, width).format.fill.color = FG;
+        sheet.getRangeByIndexes(top, left + width - 1, height, 1).format.fill.color = FG;
+      }
+
+      private drawScreen() {
+        const sheet = this.sheet;
+        const top = GAMETOP;
+        const left = GAMELEFT;
+        const width = (this.snake.cols + 2) * TILE_SIZE;
+        const height = GRIDINNERTOP - GRIDTOP + 3 + (this.snake.rows + 2) * TILE_SIZE;
+        sheet.getRangeByIndexes(top, left, height, width).format.fill.color = BG;
+      }
+
+      private drawGridSprite(
+        [r, c]: [number, number],
+        cellWidth: number,
+        cellHeight: number,
+        sprite: Excel.SettableCellProperties[][],
+      ) {
+        drawSprite(
+          this.sheet,
+          GRIDINNERTOP + r * TILE_SIZE,
+          GRIDINNERLEFT + c * TILE_SIZE,
+          cellWidth * TILE_SIZE,
+          cellHeight * TILE_SIZE,
+          sprite,
+        );
+      }
+
+      private drawScore() {
+        // @ts-ignore excel ts bug
+        const score = this.snake.score.toString().padStart(5, "0");
+        for (let i = 0; i < score.length; i++) {
+          const j = score.length - 1 - i;
+          const digit = +score[j];
+          drawSprite(this.sheet, GAMETOP + 1, GRIDLEFT + j * NUM_WIDTH, NUM_WIDTH, NUM_HEIGHT, NUMBERS[digit]);
+        }
+      }
+
+      private drawTimer() {
+        // On the other end of the grid, draw the timer in ticks remaining
+        // @ts-ignore excel ts bug
+        const time = Math.floor(this.snake.ticksRemaining).toString().padStart(2, "0");
+        const right = GRIDLEFT + (this.snake.cols + 2) * TILE_SIZE - 1;
+
+        for (let i = 0; i < time.length; i++) {
+          const j = time.length - 1 - i;
+          const digit = +time[i];
+          drawSprite(this.sheet, GAMETOP + 1, right - (j + 1) * NUM_WIDTH, NUM_WIDTH, NUM_HEIGHT, NUMBERS[digit]);
+        }
+      }
+
+      private drawSpecialBeforeTimer(i: number) {
+        const snake = this.snake;
+        if (snake.special < 0) return;
+        const right = GRIDLEFT + (this.snake.cols + 2) * TILE_SIZE - 1;
+        const start = right - 2 * NUM_WIDTH - SPECIAL_TILE_WIDTH;
+        const top = GAMETOP + NUM_HEIGHT - SPECIAL_TILE_HEIGHT + 1;
+        drawSprite(this.sheet, top, start, SPECIAL_TILE_WIDTH, SPECIAL_TILE_HEIGHT, SPECIAL[i]);
+      }
+
+      private clearSpecialAndTimer() {
+        const right = GRIDLEFT + (this.snake.cols + 2) * TILE_SIZE - 1;
+        const start = right - 2 * NUM_WIDTH - SPECIAL_TILE_WIDTH;
+        const top = GAMETOP + NUM_HEIGHT - SPECIAL_TILE_HEIGHT + 1;
+        clearCells(this.sheet, top, start, SPECIAL_TILE_WIDTH, SPECIAL_TILE_HEIGHT);
+        clearCells(this.sheet, GAMETOP + 1, right - 2 * NUM_WIDTH, NUM_WIDTH * 2, NUM_HEIGHT);
+      }
+
+      private clearGridSprite([r, c]: [number, number], cellWidth: number, cellHeight: number) {
+        clearCells(
+          this.sheet,
+          GRIDINNERTOP + r * TILE_SIZE,
+          GRIDINNERLEFT + c * TILE_SIZE,
+          cellWidth * TILE_SIZE,
+          cellHeight * TILE_SIZE,
+        );
+      }
+      handleKeydown(e: KeyboardEvent) {
+        // @ts-ignore excel ts bug
+        if (!Object.hasOwn(keyMap, e.key)) return;
+        if (this.isGameOver) return;
+        const snake = this.snake;
+        const newDir = keyMap[e.key as keyof typeof keyMap];
+        const prevDirI = (snake.segments.head - 1 + snake.segments.size) % snake.segments.size;
+        if ((newDir + 2) % 4 === snake.segments.get(prevDirI)) return;
+        snake.segments.set(snake.segments.head, newDir);
+      }
+    }
+
+
+    class Snake {
+      rows: number;
+      cols: number;
+      size: number;
+      segments: SnakeSegments;
+      singles: SparseSet;
+      pairs: SparseSet;
+      digesting: BitSet;
+      head: number;
+      tail: number;
+      fruit: number;
+      ticksRemaining: number;
+      special: number;
+      score: number;
+      level: number;
+      eaten: number;
+
+      constructor(rows: number, cols: number) {
+        this.rows = rows;
+        this.cols = cols;
+        this.size = rows * cols;
+
+        this.segments = new SnakeSegments(this.size);
+        this.singles = new SparseSet(this.size);
+        this.pairs = new SparseSet(this.size);
+        this.digesting = new BitSet(this.size);
+
+        // cells in last column can't be a pair start
+        for (let i = cols - 1; i < this.size; i += cols) this.pairs.occupyS(i);
+
+        const [mR, mC] = [Math.floor(rows / 2), Math.floor(cols / 2)];
+        this.head = this.pairToIndex(this.add([mR, mC], [0, 1]));
+        this.tail = this.pairToIndex(this.add([mR, mC], [0, -2]));
+
+        for (let i = 0; i < 4; i++) {
+          const j = this.pairToIndex([mR, mC - 2 + i]);
+          this.occupy(j);
+          this.segments.set(i % this.size, Right);
+          this.segments.head = i % this.size;
+        }
+
+        this.fruit = this.singles.randomS();
+        if (this.fruit !== -1) this.occupy(this.fruit);
+
+        this.ticksRemaining = 0;
+        this.special = -2; // Left cell
+
+        this.score = 0;
+        this.level = 1;
+
+        this.eaten = 0;
+      }
+
+      indexToPair(i: number): [number, number] {
+        return [Math.floor(i / this.cols), i % this.cols];
+      }
+
+      add(a: [number, number], b: [number, number]): [number, number] {
+        return [(a[0] + b[0] + this.rows) % this.rows, (a[1] + b[1] + this.cols) % this.cols];
+      }
+
+      pairToIndex([r, c]: [number, number]) {
+        return (r % this.rows) * this.cols + (c % this.cols);
+      }
+
+      dirToRelative(j: number) {
+        // prettier-ignore
+        const dirs: [number, number][] = [[-1, 0], [0, 1], [1, 0], [0, -1]];
+        return dirs[j];
+      }
+
+      move(newHead: number, newTail: number) {
+        this.free(this.tail);
+        this.occupy(newHead);
+        this.segments.move();
+        this.tail = newTail;
+        this.head = newHead;
+      }
+
+      grow(newHead: number) {
+        this.segments.grow();
+        this.head = newHead;
+        this.eaten++;
+      }
+
+      occupy(i: number) {
+        this.singles.occupyS(i);
+        const j = i % this.cols;
+        // occupyS/freeS are idempotent
+        if (j !== this.cols - 1) this.pairs.occupyS(i); // i is legal start
+        if (j !== 0) this.pairs.occupyS(i - 1); // i is legal end
+      }
+
+      free(i: number) {
+        this.singles.freeS(i);
+        const j = i % this.cols;
+        if (j !== this.cols - 1 && this.singles.isFreeS(i + 1)) this.pairs.freeS(i); // i is legal start
+        if (j !== 0 && this.singles.isFreeS(i - 1)) this.pairs.freeS(i - 1); // i is legal end
+      }
+    }
+
+
+    class SnakeSegments {
+      size: number;
+      segments: Uint32Array;
+      head: number;
+      tail: number;
+      constructor(boardSize: number) {
+        this.size = boardSize;
+        this.segments = new Uint32Array(Math.ceil(boardSize / 16));
+        this.head = 0;
+        this.tail = 0;
+        // 2 bits per direction => 16 direction per array element
+      }
+
+      absPos(relative: number) {
+        return (this.tail + relative) % this.size;
+      }
+
+      get(abs: number) {
+        const i = abs >> 4; // abs/16
+        const shift = (abs & 15) << 1; // (abs%16)*2
+        return (this.segments[i] >>> shift) & 0b11;
+      }
+
+      set(abs: number, dir: number) {
+        const i = abs >> 4;
+        const shift = (abs & 15) << 1;
+        const segment = (dir & 0b11) << shift;
+        const mask = ~(0b11 << shift);
+        this.segments[i] = (this.segments[i] & mask) | segment;
+      }
+
+      insert(dir: number) {
+        this.head = (this.head + 1) % this.size;
+        this.set(this.head, dir);
+      }
+
+      move() {
+        this.insert(this.get(this.head));
+        this.tail = (this.tail + 1) % this.size;
+      }
+
+      grow() {
+        this.insert(this.get(this.head));
+      }
+    }
+
+    class SparseSet {
+      D: Uint32Array;
+      S: Uint32Array;
+      separator: number;
+      constructor(size: number) {
+        this.D = Uint32Array.from({ length: size }, (_, i) => i); // dense
+        this.S = Uint32Array.from({ length: size }, (_, i) => i); // sparse
+        this.separator = size;
+      }
+
+      get size() {
+        return this.D.length;
+      }
+
+      randomS() {
+        return this.separator === 0 ? -1 : this.D[Math.floor(Math.random() * this.separator)];
+      }
+
+      freeS(i: number) {
+        this.free(this.S[i]);
+      }
+
+      occupyS(i: number) {
+        this.occupy(this.S[i]);
+      }
+
+      swapS(i: number, j: number) {
+        this.swap(this.S[i], this.S[j]);
+      }
+
+      isFreeS(i: number) {
+        return this.isFree(this.S[i]);
+      }
+
+      free(i: number) {
+        if (i < this.separator || this.separator === this.size) return; // already free
+        this.swap(i, this.separator);
+        this.separator++;
+      }
+
+      occupy(i: number) {
+        if (i >= this.separator) return; // already occupied
+        this.swap(i, this.separator - 1);
+        this.separator--;
+      }
+
+      swap(i: number, j: number) {
+        const S = this.S;
+        const D = this.D;
+        [D[i], D[j]] = [D[j], D[i]];
+        [S[D[i]], S[D[j]]] = [i, j];
+      }
+
+      isFree(i: number) {
+        return i < this.separator;
+      }
+    }
+
+
+    class BitSet {
+      private data: Uint32Array;
+      readonly size: number;
+      constructor(size: number) {
+        this.size = size;
+        this.data = new Uint32Array(Math.ceil(size / 32));
+      }
+      get(i: number): 0 | 1 {
+        if (i < 0 || i >= this.size) return 0;
+        const w = i >>> 5; // divide by 32
+        const shift = i & 31; // mod 32
+        return ((this.data[w] >>> shift) & 1) as 0 | 1;
+      }
+
+      set(i: number, v: 0 | 1) {
+        if (i < 0 || i >= this.size) return;
+        const w = i >>> 5;
+        const shift = i & 31;
+        const mask = 1 << shift;
+        this.data[w] = (this.data[w] & ~mask) | ((v << shift) & mask);
+      }
+
+      toggle(i: number) {
+        if (i < 0 || i >= this.size) return;
+        this.data[i >>> 5] ^= 1 << (i & 31);
+      }
+
+      clear() {
+        this.data.fill(0);
+      }
+    }
+
+
+    function bitsToPropMat(rows: number, cols: number, bits: number):
+    Excel.SettableCellProperties[][] {
+      return Array.from({ length: rows }, (_, i) =>
+        Array.from({ length: cols }, (_, j) => {
+          return { format: { fill: { color: (bits >>> (i * cols + j)) & 1 ? FG : BG } } };
+        }),
+      );
+    }
+
+
+    function clearCells(sheet: Excel.Worksheet, row: number, col: number, width:
+    number, height: number) {
+      if (row < 0 || col < 0 || width <= 0 || height <= 0) return;
+      const range = sheet.getRangeByIndexes(row, col, height, width);
+      range.format.fill.color = BG;
+    }
+
+
+    function drawSprite(
+      sheet: Excel.Worksheet,
+      row: number,
+      col: number,
+      width: number,
+      height: number,
+      mat: Excel.SettableCellProperties[][],
+    ) {
+      if (row < 0 || col < 0 || width <= 0 || height <= 0) return;
+      const range = sheet.getRangeByIndexes(row, col, height, width);
+      range.setCellProperties(mat);
+    }
+
+
+    function formatBackground(sheet: Excel.Worksheet) {
+      const range = sheet.getRange();
+      range.format.columnWidth = 4;
+      range.format.rowHeight = 4;
+      range.format.fill.color = FG;
+    }
+
+
+    /** Default helper for invoking an action and handling errors. */
+
+    async function tryCatch(callback: () => Promise<any>) {
+      try {
+        await callback();
+      } catch (error) {
+        // Note: In a production add-in, you'd want to notify the user through your add-in's UI.
+        console.error(error);
+      }
+    }
+
+
+    setup();
+  language: typescript
+template:
+  content: "<div id=\"container\">\n\t<h2>Nokia 3310 Snake II Clone in Excel (TypeScript)</h2>\n\t<section style=\"margin-top: 30px\">\n\t\t<div>\n\t\t\t<label for=\"speed\">Level:</label>\n\t\t\t<input id=\"speed\" type=\"range\" min=\"1\" max=\"9\" value=\"5\" />\n\t\t</div>\n\n\t\t<label for=\"width\">Width:</label>\n\t\t<input type=\"number\" id=\"width\" value=\"20\" min=\"8\" />\n\n\t\t<label for=\"height\">Height:</label>\n\t\t<input type=\"number\" id=\"height\" value=\"11\" min=\"2\" />\n\n\t\t<div id=\"result\" style=\"visibility: hidden\">\n\t\t\tYou <span id=\"winloss\">WIN</span>! <br />\n      Score: <span id=\"final\">0</span>\n\t\t</div>\n\t</section>\n\t<section style=\"margin-top: 30px\">\n\t\t<button id=\"play\">Play</button>\n\t</section>\n</div>"
+  language: html
+style:
+  content: |
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+        padding: 10px;
+    }
+
+    button {
+        background-color: #f0f0f0;
+        color: #333333;
+        border: 1px solid #8a8a8a;
+        padding: 8px 16px;
+        font-size: 14px;
+        cursor: pointer;
+        border-radius: 2px;
+        margin-left: 20px;
+        margin-bottom: 5px;
+        min-width: 80px;
+        display: block;
+    }
+
+    button:hover {
+        background-color: #e0e0e0;
+    }
+
+    button:active {
+        background-color: #d0d0d0;
+    }
+
+    h2:not(:first-child) {
+        margin-top: 35px;
+    }
+
+    #size {
+        width: 100%;
+    }
+  language: css
+libraries: >-
+  https://appsforoffice.microsoft.com/lib/1/hosted/office.js
+
+  https://raw.githubusercontent.com/DefinitelyTyped/DefinitelyTyped/master/types/office-js/index.d.ts
