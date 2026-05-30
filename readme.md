@@ -1,6 +1,11 @@
 # Nokia 3310 Snake II — inside Microsoft Excel
 
-> A pixel-accurate Snake II clone running entirely in a spreadsheet, with no plugins, no canvas, no WebGL — just cell background colors.
+<img width="582" height="351" alt="jLqaSo" src="https://github.com/user-attachments/assets/dbe266f2-bf8c-42b2-abfd-550fad948bae" />
+
+
+
+
+> A pixel-accurate Snake II clone running entirely in a spreadsheet, with no plugins, no canvas, no WebGL — just a spreadsheet.
 
 Excel's cell-formatting engine, repurposed as a pixel renderer. Each cell is resized to 4 × 4 px and painted via `setCellProperties`, turning the worksheet into a monochrome Nokia display. Wrap-around movement, timed bonus items, original score multipliers — mechanically faithful to the Nokia original.
 
